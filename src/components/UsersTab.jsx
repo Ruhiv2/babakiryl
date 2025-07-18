@@ -38,27 +38,27 @@ function UsersTab() {
   }
 
   return (
-    <div>
+    <div className="max-w-7xl mx-auto">
       <h2 className="text-2xl font-semibold text-gray-800 mb-4">Manage Users</h2>
       <div className="overflow-x-auto">
-        <table className="w-full bg-white shadow rounded">
-          <thead>
-            <tr className="bg-gray-200">
-              <th className="p-2 text-left text-gray-700">ID</th>
-              <th className="p-2 text-left text-gray-700">Email</th>
-              <th className="p-2 text-left text-gray-700">Full Name</th>
-              <th className="p-2 text-left text-gray-700">Phone Number</th>
-              <th className="p-2 text-left text-gray-700">Created At</th>
+        <table className="w-full bg-white rounded-lg shadow-md">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="p-3 text-left text-gray-700 font-medium">ID</th>
+              <th className="p-3 text-left text-gray-700 font-medium">Email</th>
+              <th className="p-3 text-left text-gray-700 font-medium">Full Name</th>
+              <th className="p-3 text-left text-gray-700 font-medium">Phone Number</th>
+              <th className="p-3 text-left text-gray-700 font-medium">Created At</th>
             </tr>
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.id} className="border-t">
-                <td className="p-2">{user.id}</td>
-                <td className="p-2">{user.email}</td>
-                <td className="p-2">{user.full_name}</td>
-                <td className="p-2">{user.phone_number || 'N/A'}</td>
-                <td className="p-2">{formatDate(user.created_at)}</td>
+              <tr key={user.id} className="border-t hover:bg-gray-50">
+                <td className="p-3 text-gray-900">{user.id}</td>
+                <td className="p-3 text-gray-900">{user.email}</td>
+                <td className="p-3 text-gray-900">{user.full_name}</td>
+                <td className="p-3 text-gray-900">{user.phone_number || 'N/A'}</td>
+                <td className="p-3 text-gray-900">{formatDate(user.created_at)}</td>
               </tr>
             ))}
           </tbody>

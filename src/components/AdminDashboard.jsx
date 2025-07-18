@@ -59,22 +59,27 @@ function AdminDashboard() {
   }
 
   return (
-    <div className="container mx-auto p-4">
+    <div className="min-h-screen bg-gray-50">
+      <div className="container mx-auto px-4 py-6">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-800">Adamas Lottery Admin Panel</h1>
         <button
           onClick={handleSignOut}
-          className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600"
+          className="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 transition duration-200"
         >
           Sign Out
         </button>
       </div>
-      <div className="flex space-x-4 mb-4">
+      <div className="flex flex-wrap gap-2 mb-6">
         {['draws', 'winning_numbers', 'users', 'tickets'].map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 rounded font-medium ${activeTab === tab ? 'bg-primary-blue text-white' : 'bg-gray-200 text-gray-700'}`}
+            className={`px-4 py-2 rounded-md font-medium transition duration-200 ${
+              activeTab === tab 
+                ? 'bg-primary text-white' 
+                : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-300'
+            }`}
           >
             {tab.charAt(0).toUpperCase() + tab.slice(1).replace('_', ' ')}
           </button>
@@ -84,6 +89,7 @@ function AdminDashboard() {
       {activeTab === 'winning_numbers' && <WinningNumbersTab />}
       {activeTab === 'users' && <UsersTab />}
       {activeTab === 'tickets' && <TicketsTab />}
+      </div>
     </div>
   );
 }
