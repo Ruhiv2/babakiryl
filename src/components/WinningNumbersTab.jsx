@@ -4,11 +4,13 @@ import { supabase } from '../lib/supabase';
 function WinningNumbersTab() {
   const [winningNumbers, setWinningNumbers] = useState([]);
   const [filteredNumbers, setFilteredNumbers] = useState([]);
+  const [draws, setDraws] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [positionFilter, setPositionFilter] = useState('all');
+  const [drawFilter, setDrawFilter] = useState('all');
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState({
-    draw_date: '',
+    draw_id: '',
     winning_number: '',
     position: '',
     prize_amount: '',
@@ -17,12 +19,40 @@ function WinningNumbersTab() {
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
+  const [showBulkAdd, setShowBulkAdd] = useState(false);
+  const [bulkNumbers, setBulkNumbers] = useState('');
+
+  const fetchDraws = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('draws')
+        .select('id, draw_date, jackpot_amount, status')
+        .order('draw_date', { ascending: false });
+      if (error) throw error;
+      setDraws(data);
+    } catch (error) {
+      console.error('Error fetching draws:', error);
+    }
+  };
 
   const fetchWinningNumbers = async () => {
     try {
       const { data, error } = await supabase
         .from('winning_numbers')
-        .select('id, draw_date, winning_number, position, prize_amount, created_at')
+        .select(`
+          id, 
+          draw_id, 
+          winning_number, 
+          position, 
+          prize_amount, 
+          created_at,
+          draws (
+            id,
+            draw_date,
+            jackpot_amount,
+            status
+          )
+        `)
         .order('created_at', { ascending: false });
       if (error) throw error;
       console.log('Fetched winning numbers:', data);
@@ -37,12 +67,18 @@ function WinningNumbersTab() {
   };
 
   useEffect(() => {
+    fetchDraws();
     fetchWinningNumbers();
   }, []);
 
   // Filter and search functionality
   useEffect(() => {
     let filtered = winningNumbers;
+
+    // Apply draw filter
+    if (drawFilter !== 'all') {
+      filtered = filtered.filter(wn => wn.draw_id.toString() === drawFilter);
+    }
 
     // Apply position filter
     if (positionFilter !== 'all') {
@@ -53,14 +89,14 @@ function WinningNumbersTab() {
     if (searchTerm) {
       filtered = filtered.filter(wn =>
         wn.winning_number.includes(searchTerm) ||
-        wn.draw_date.includes(searchTerm) ||
-        wn.position.toString().includes(searchTerm)
+        wn.position.toString().includes(searchTerm) ||
+        (wn.draws && wn.draws.draw_date.includes(searchTerm))
       );
     }
 
     setFilteredNumbers(filtered);
     setCurrentPage(1);
-  }, [winningNumbers, searchTerm, positionFilter]);
+  }, [winningNumbers, searchTerm, positionFilter, drawFilter]);
 
   // Pagination
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -68,16 +104,32 @@ function WinningNumbersTab() {
   const currentItems = filteredNumbers.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(filteredNumbers.length / itemsPerPage);
 
+  const validateWinningNumber = (number) => {
+    return /^\d{3}-\d{7}$/.test(number);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setFormError(null);
     
-    if (!formData.winning_number.match(/^\d{3}-\d{7}$/)) {
+    if (!validateWinningNumber(formData.winning_number)) {
       setFormError('Winning number must be in format XXX-YYYYYYY (e.g., 212-1212121)');
       return;
     }
     if (!formData.position.match(/^[1-9]$|^10$/)) {
       setFormError('Position must be between 1 and 10');
+      return;
+    }
+
+    // Check for duplicate position in the same draw
+    const existingPosition = winningNumbers.find(wn => 
+      wn.draw_id.toString() === formData.draw_id && 
+      wn.position.toString() === formData.position &&
+      wn.id !== editingId
+    );
+    
+    if (existingPosition) {
+      setFormError(`Position ${formData.position} already exists for this draw`);
       return;
     }
 
@@ -87,7 +139,7 @@ function WinningNumbersTab() {
         const { error } = await supabase
           .from('winning_numbers')
           .update({
-            draw_date: formData.draw_date,
+            draw_id: parseInt(formData.draw_id),
             winning_number: formData.winning_number,
             position: parseInt(formData.position),
             prize_amount: parseFloat(formData.prize_amount),
@@ -101,7 +153,7 @@ function WinningNumbersTab() {
         const { error } = await supabase
           .from('winning_numbers')
           .insert([{
-            draw_date: formData.draw_date,
+            draw_id: parseInt(formData.draw_id),
             winning_number: formData.winning_number,
             position: parseInt(formData.position),
             prize_amount: parseFloat(formData.prize_amount),
@@ -109,7 +161,7 @@ function WinningNumbersTab() {
         if (error) throw error;
         alert('Winning number created successfully');
       }
-      setFormData({ draw_date: '', winning_number: '', position: '', prize_amount: '' });
+      setFormData({ draw_id: '', winning_number: '', position: '', prize_amount: '' });
       fetchWinningNumbers();
     } catch (error) {
       console.error('Error submitting winning number:', error);
@@ -117,10 +169,87 @@ function WinningNumbersTab() {
     }
   };
 
+  const handleBulkAdd = async (e) => {
+    e.preventDefault();
+    setFormError(null);
+
+    if (!formData.draw_id) {
+      setFormError('Please select a draw first');
+      return;
+    }
+
+    const lines = bulkNumbers.trim().split('\n');
+    const numbersToAdd = [];
+    const errors = [];
+
+    lines.forEach((line, index) => {
+      const parts = line.trim().split(',');
+      if (parts.length !== 3) {
+        errors.push(`Line ${index + 1}: Must have format "number,position,prize"`);
+        return;
+      }
+
+      const [number, position, prize] = parts.map(p => p.trim());
+      
+      if (!validateWinningNumber(number)) {
+        errors.push(`Line ${index + 1}: Invalid number format (use XXX-YYYYYYY)`);
+        return;
+      }
+
+      const pos = parseInt(position);
+      if (pos < 1 || pos > 10) {
+        errors.push(`Line ${index + 1}: Position must be 1-10`);
+        return;
+      }
+
+      const prizeAmount = parseFloat(prize);
+      if (isNaN(prizeAmount) || prizeAmount < 0) {
+        errors.push(`Line ${index + 1}: Invalid prize amount`);
+        return;
+      }
+
+      numbersToAdd.push({
+        draw_id: parseInt(formData.draw_id),
+        winning_number: number,
+        position: pos,
+        prize_amount: prizeAmount
+      });
+    });
+
+    if (errors.length > 0) {
+      setFormError(errors.join('\n'));
+      return;
+    }
+
+    // Check for duplicate positions
+    const positions = numbersToAdd.map(n => n.position);
+    const duplicatePositions = positions.filter((pos, index) => positions.indexOf(pos) !== index);
+    if (duplicatePositions.length > 0) {
+      setFormError(`Duplicate positions found: ${duplicatePositions.join(', ')}`);
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('winning_numbers')
+        .insert(numbersToAdd);
+      
+      if (error) throw error;
+      
+      alert(`Successfully added ${numbersToAdd.length} winning numbers`);
+      setBulkNumbers('');
+      setShowBulkAdd(false);
+      fetchWinningNumbers();
+    } catch (error) {
+      console.error('Error bulk adding winning numbers:', error);
+      setFormError(error.message);
+    }
+  };
+
   const handleEdit = (wn) => {
     setEditingId(wn.id);
     setFormData({
-      draw_date: wn.draw_date,
+      draw_id: wn.draw_id.toString(),
       winning_number: wn.winning_number,
       position: wn.position.toString(),
       prize_amount: wn.prize_amount.toString(),
@@ -143,7 +272,7 @@ function WinningNumbersTab() {
 
   const cancelEdit = () => {
     setEditingId(null);
-    setFormData({ draw_date: '', winning_number: '', position: '', prize_amount: '' });
+    setFormData({ draw_id: '', winning_number: '', position: '', prize_amount: '' });
     setFormError(null);
   };
 
@@ -164,19 +293,179 @@ function WinningNumbersTab() {
   };
 
   const getPositionBadgeColor = (position) => {
-    if (position <= 3) return 'bg-yellow-100 text-yellow-800';
-    if (position <= 6) return 'bg-blue-100 text-blue-800';
-    return 'bg-gray-100 text-gray-800';
+    if (position <= 3) return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    if (position <= 6) return 'bg-blue-100 text-blue-800 border-blue-200';
+    return 'bg-gray-100 text-gray-800 border-gray-200';
+  };
+
+  const getDrawStatusBadge = (status) => {
+    const colors = {
+      upcoming: 'bg-yellow-100 text-yellow-800',
+      active: 'bg-green-100 text-green-800',
+      completed: 'bg-blue-100 text-blue-800'
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800';
+  };
+
+  const getAvailablePositions = (drawId) => {
+    const usedPositions = winningNumbers
+      .filter(wn => wn.draw_id.toString() === drawId && wn.id !== editingId)
+      .map(wn => wn.position);
+    
+    return [...Array(10)].map((_, i) => i + 1).filter(pos => !usedPositions.includes(pos));
   };
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-3xl font-bold text-gray-900">Manage Winning Numbers</h2>
-        <div className="text-sm text-gray-500">
-          Total: {filteredNumbers.length} winning numbers
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowBulkAdd(!showBulkAdd)}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors font-medium"
+          >
+            {showBulkAdd ? 'Hide Bulk Add' : 'Bulk Add Numbers'}
+          </button>
+          <div className="text-sm text-gray-500 flex items-center">
+            Total: {filteredNumbers.length} winning numbers
+          </div>
         </div>
       </div>
+
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-blue-100">
+              <div className="w-6 h-6 bg-blue-600 rounded"></div>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Total Numbers</p>
+              <p className="text-2xl font-bold text-gray-900">{winningNumbers.length}</p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-yellow-100">
+              <div className="w-6 h-6 bg-yellow-600 rounded"></div>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Top 3 Positions</p>
+              <p className="text-2xl font-bold text-yellow-600">
+                {winningNumbers.filter(wn => wn.position <= 3).length}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-green-100">
+              <div className="w-6 h-6 bg-green-600 rounded"></div>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Active Draws</p>
+              <p className="text-2xl font-bold text-green-600">
+                {draws.filter(d => d.status === 'active').length}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-purple-100">
+              <div className="w-6 h-6 bg-purple-600 rounded"></div>
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-500">Total Prize Pool</p>
+              <p className="text-lg font-bold text-purple-600">
+                {formatCurrency(winningNumbers.reduce((sum, wn) => sum + wn.prize_amount, 0))}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bulk Add Form */}
+      {showBulkAdd && (
+        <div className="bg-white rounded-xl shadow-lg border border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900">Bulk Add Winning Numbers</h3>
+            <p className="text-sm text-gray-600 mt-1">
+              Add multiple winning numbers at once. Format: number,position,prize (one per line)
+            </p>
+          </div>
+          <form onSubmit={handleBulkAdd} className="p-6">
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Draw *
+                </label>
+                <select
+                  value={formData.draw_id}
+                  onChange={(e) => setFormData({ ...formData, draw_id: e.target.value })}
+                  required
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                >
+                  <option value="">Select a draw</option>
+                  {draws.map((draw) => (
+                    <option key={draw.id} value={draw.id}>
+                      {formatDate(draw.draw_date)} - {formatCurrency(draw.jackpot_amount)} ({draw.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Example Format
+                </label>
+                <div className="bg-gray-50 p-3 rounded-lg text-sm font-mono text-gray-600">
+                  212-1234567,1,100000<br/>
+                  213-7654321,2,50000<br/>
+                  214-9876543,3,25000
+                </div>
+              </div>
+            </div>
+            <div className="mt-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Winning Numbers (one per line) *
+              </label>
+              <textarea
+                value={bulkNumbers}
+                onChange={(e) => setBulkNumbers(e.target.value)}
+                rows={8}
+                placeholder="212-1234567,1,100000&#10;213-7654321,2,50000&#10;214-9876543,3,25000"
+                required
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors font-mono text-sm"
+              />
+            </div>
+            {formError && (
+              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <pre className="text-red-600 text-sm whitespace-pre-wrap">{formError}</pre>
+              </div>
+            )}
+            <div className="flex gap-3 mt-6">
+              <button
+                type="submit"
+                className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors font-medium"
+              >
+                Add All Numbers
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBulkAdd(false);
+                  setBulkNumbers('');
+                  setFormError(null);
+                }}
+                className="bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Add/Edit Form */}
       <div className="bg-white rounded-xl shadow-lg border border-gray-200">
@@ -189,15 +478,21 @@ function WinningNumbersTab() {
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Draw Date *
+                Select Draw *
               </label>
-              <input
-                type="date"
-                value={formData.draw_date}
-                onChange={(e) => setFormData({ ...formData, draw_date: e.target.value })}
+              <select
+                value={formData.draw_id}
+                onChange={(e) => setFormData({ ...formData, draw_id: e.target.value })}
                 required
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-              />
+              >
+                <option value="">Select a draw</option>
+                {draws.map((draw) => (
+                  <option key={draw.id} value={draw.id}>
+                    {formatDate(draw.draw_date)} - {formatCurrency(draw.jackpot_amount)} ({draw.status})
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -225,12 +520,23 @@ function WinningNumbersTab() {
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               >
                 <option value="">Select Position</option>
-                {[...Array(10)].map((_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    Position {i + 1}
-                  </option>
-                ))}
+                {formData.draw_id ? (
+                  getAvailablePositions(formData.draw_id).map((pos) => (
+                    <option key={pos} value={pos}>
+                      Position {pos}
+                    </option>
+                  ))
+                ) : (
+                  [...Array(10)].map((_, i) => (
+                    <option key={i + 1} value={i + 1}>
+                      Position {i + 1}
+                    </option>
+                  ))
+                )}
               </select>
+              {formData.draw_id && getAvailablePositions(formData.draw_id).length === 0 && (
+                <p className="text-xs text-red-500 mt-1">All positions filled for this draw</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -256,7 +562,8 @@ function WinningNumbersTab() {
           <div className="flex gap-3 mt-6">
             <button
               type="submit"
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors font-medium"
+              disabled={formData.draw_id && getAvailablePositions(formData.draw_id).length === 0 && !editingId}
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {editingId ? 'Update Winning Number' : 'Add Winning Number'}
             </button>
@@ -275,20 +582,37 @@ function WinningNumbersTab() {
 
       {/* Search and Filter */}
       <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6">
-        <div className="flex flex-col md:flex-row gap-4">
+        <div className="flex flex-col lg:flex-row gap-4">
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Search Winning Numbers
             </label>
             <input
               type="text"
-              placeholder="Search by number, date, or position..."
+              placeholder="Search by number, position, or draw date..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
             />
           </div>
-          <div className="md:w-48">
+          <div className="lg:w-48">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Filter by Draw
+            </label>
+            <select
+              value={drawFilter}
+              onChange={(e) => setDrawFilter(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+            >
+              <option value="all">All Draws</option>
+              {draws.map((draw) => (
+                <option key={draw.id} value={draw.id}>
+                  {formatDate(draw.draw_date)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="lg:w-48">
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Filter by Position
             </label>
@@ -326,7 +650,7 @@ function WinningNumbersTab() {
                     ID
                   </th>
                   <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Draw Date
+                    Draw Info
                   </th>
                   <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Winning Number
@@ -352,13 +676,23 @@ function WinningNumbersTab() {
                       #{wn.id}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatDate(wn.draw_date)}
+                      <div>
+                        <div className="font-medium">{formatDate(wn.draws.draw_date)}</div>
+                        <div className="text-xs text-gray-500">
+                          {formatCurrency(wn.draws.jackpot_amount)}
+                        </div>
+                        <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium mt-1 ${getDrawStatusBadge(wn.draws.status)}`}>
+                          {wn.draws.status}
+                        </span>
+                      </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900 bg-gray-50 rounded px-2 py-1">
-                      {wn.winning_number}
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900">
+                      <span className="bg-gray-50 px-3 py-1 rounded-lg border">
+                        {wn.winning_number}
+                      </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${getPositionBadgeColor(wn.position)}`}>
+                      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium border ${getPositionBadgeColor(wn.position)}`}>
                         #{wn.position}
                       </span>
                     </td>
