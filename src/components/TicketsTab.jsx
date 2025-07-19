@@ -4,13 +4,14 @@ import { supabase } from '../lib/supabase';
 function TicketsTab() {
   const [tickets, setTickets] = useState([]);
   const [filteredTickets, setFilteredTickets] = useState([]);
+  const [draws, setDraws] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState({ 
     ticket_number: '', 
-    draw_date: '', 
+    draw_id: '', 
     status: 'active', 
     source: 'Manual',
     prize_amount: ''
@@ -26,11 +27,28 @@ function TicketsTab() {
     day: 'numeric'
   });
 
+  const fetchDraws = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('draws')
+        .select('id, draw_date, jackpot_amount, status')
+        .order('draw_date', { ascending: false });
+      if (error) throw error;
+      setDraws(data);
+    } catch (error) {
+      console.error('Error fetching draws:', error);
+    }
+  };
+
   const fetchTickets = async () => {
     try {
       const { data, error } = await supabase
         .from('tickets')
-        .select('*, users(email, full_name)')
+        .select(`
+          *, 
+          users(email, full_name),
+          draws(draw_date, jackpot_amount, status)
+        `)
         .order('created_at', { ascending: false });
       if (error) throw error;
       console.log('Fetched tickets:', data);
@@ -45,6 +63,7 @@ function TicketsTab() {
   };
 
   useEffect(() => {
+    fetchDraws();
     fetchTickets();
   }, []);
 
@@ -86,7 +105,7 @@ function TicketsTab() {
     setEditingId(ticket.id);
     setFormData({
       ticket_number: ticket.ticket_number,
-      draw_date: formatDate(ticket.draw_date),
+      draw_id: ticket.draw_id.toString(),
       status: ticket.status,
       source: ticket.source,
       prize_amount: ticket.prize_amount ? ticket.prize_amount.toString() : '',
@@ -99,7 +118,7 @@ function TicketsTab() {
     try {
       const updateData = {
         ticket_number: formData.ticket_number,
-        draw_date: formData.draw_date,
+        draw_id: parseInt(formData.draw_id),
         status: formData.status,
         source: formData.source,
       };
@@ -118,7 +137,7 @@ function TicketsTab() {
       console.log('Ticket updated:', editingId);
       alert('Ticket updated successfully');
       setEditingId(null);
-      setFormData({ ticket_number: '', draw_date: '', status: 'active', source: 'Manual', prize_amount: '' });
+      setFormData({ ticket_number: '', draw_id: '', status: 'active', source: 'Manual', prize_amount: '' });
       fetchTickets();
     } catch (error) {
       console.error('Error updating ticket:', error);
@@ -143,7 +162,7 @@ function TicketsTab() {
 
   const cancelEdit = () => {
     setEditingId(null);
-    setFormData({ ticket_number: '', draw_date: '', status: 'active', source: 'Manual', prize_amount: '' });
+    setFormData({ ticket_number: '', draw_id: '', status: 'active', source: 'Manual', prize_amount: '' });
     setFormError(null);
   };
 
@@ -254,15 +273,21 @@ function TicketsTab() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Draw Date *
+                  Select Draw *
                 </label>
-                <input
-                  type="date"
-                  value={formData.draw_date}
-                  onChange={(e) => setFormData({ ...formData, draw_date: e.target.value })}
+                <select
+                  value={formData.draw_id}
+                  onChange={(e) => setFormData({ ...formData, draw_id: e.target.value })}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                   required
-                />
+                >
+                  <option value="">Select a draw</option>
+                  {draws.map((draw) => (
+                    <option key={draw.id} value={draw.id}>
+                      {formatDate(draw.draw_date)} - {formatCurrency(draw.jackpot_amount)} ({draw.status})
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
